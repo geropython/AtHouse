@@ -30,4 +30,5 @@ export interface HomeEvent {
   status: HomeEventStatus
   isScheduled: boolean
   createdAt: number
+  creatorMemberNumber?: 1 | 2 | 3 | 4 | 5
 }

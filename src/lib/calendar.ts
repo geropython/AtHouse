@@ -38,6 +38,10 @@ export function eventCoversDate(event: HomeEvent, date: string): boolean {
   return event.startDate <= date && date <= event.endDate
 }
 
+export function getEventOwnerClass(memberNumber?: HomeEvent['creatorMemberNumber']): string {
+  return `event-owner-${memberNumber && memberNumber >= 1 && memberNumber <= 5 ? memberNumber : 1}`
+}
+
 export function getActiveCalendarEvents(events: HomeEvent[], today = toDateKey(new Date())): HomeEvent[] {
   return events.filter((event) => event.isScheduled && !isExpired(event.expiresAt, today))
 }

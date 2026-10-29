@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { addDays, formatDate, isExpired, toDateKey } from './lib/calendar'
+import { addDays, formatDate, getEventOwnerClass, isExpired, toDateKey } from './lib/calendar'
 import type { HomeEvent } from './types'
 
 interface EventsPageProps {
@@ -153,9 +153,9 @@ function EventCard({
 }) {
   const expired = isExpired(event.expiresAt)
   return (
-    <article className={`event-card${expired ? ' is-expired' : ''}${event.status === 'completed' ? ' is-completed' : ''}`}>
+    <article className={`event-card ${getEventOwnerClass(event.creatorMemberNumber)}${expired ? ' is-expired' : ''}${event.status === 'completed' ? ' is-completed' : ''}`}>
       <div className="event-card-heading">
-        <span className={`event-entry-mark${event.status === 'completed' ? ' is-completed' : ''}`} />
+        <span className={`event-entry-mark ${getEventOwnerClass(event.creatorMemberNumber)}${event.status === 'completed' ? ' is-completed' : ''}`} />
         <div className="event-card-title">
           <h3>{event.title}</h3>
           <span className={`event-status${event.isScheduled ? ' is-scheduled' : ''}`}>

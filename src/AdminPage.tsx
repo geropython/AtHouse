@@ -1,18 +1,28 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { apiRequest, type HouseholdResponse } from './lib/api'
 
 interface AdminPageProps {
   csrfToken: string
+  focusInvitation: boolean
+  onInvitationFocused: () => void
+  onHouseholdSummaryChanged: () => void
   onSessionExpired: () => void
 }
 
-export default function AdminPage({ csrfToken, onSessionExpired }: AdminPageProps) {
+export default function AdminPage({
+  csrfToken,
+  focusInvitation,
+  onInvitationFocused,
+  onHouseholdSummaryChanged,
+  onSessionExpired,
+}: AdminPageProps) {
   const [data, setData] = useState<HouseholdResponse | null>(null)
   const [householdName, setHouseholdName] = useState('')
   const [inviteEmail, setInviteEmail] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busyAction, setBusyAction] = useState('')
+  const inviteEmailRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -28,6 +38,13 @@ export default function AdminPage({ csrfToken, onSessionExpired }: AdminPageProp
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (!focusInvitation || !data) return
+    inviteEmailRef.current?.focus()
+    inviteEmailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    onInvitationFocused()
+  }, [focusInvitation, data, onInvitationFocused])
 
   async function submitHousehold(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -63,8 +80,11 @@ export default function AdminPage({ csrfToken, onSessionExpired }: AdminPageProp
       setNotice(result.message)
       setInviteEmail('')
       await refresh()
+      onHouseholdSummaryChanged()
     } catch (requestError) {
       setError(getErrorMessage(requestError))
+      await refresh()
+      onHouseholdSummaryChanged()
     } finally {
       setBusyAction('')
     }
@@ -78,6 +98,7 @@ export default function AdminPage({ csrfToken, onSessionExpired }: AdminPageProp
       await apiRequest(`/household/members/${encodeURIComponent(id)}`, { method: 'DELETE', csrfToken })
       setNotice('El acceso del miembro fue revocado.')
       await refresh()
+      onHouseholdSummaryChanged()
     } catch (requestError) {
       setError(getErrorMessage(requestError))
     } finally {
@@ -93,6 +114,7 @@ export default function AdminPage({ csrfToken, onSessionExpired }: AdminPageProp
       await apiRequest(`/household/invitations/${encodeURIComponent(id)}`, { method: 'DELETE', csrfToken })
       setNotice('La invitación fue revocada.')
       await refresh()
+      onHouseholdSummaryChanged()
     } catch (requestError) {
       setError(getErrorMessage(requestError))
     } finally {
@@ -130,6 +152,9 @@ export default function AdminPage({ csrfToken, onSessionExpired }: AdminPageProp
       </section>
     )
   }
+
+  const occupiedPlaces = data.members.length + data.invitations.length
+  const hasAvailablePlaces = occupiedPlaces < 5
 
   return (
     <section className="page-content admin-page">
@@ -185,12 +210,14 @@ export default function AdminPage({ csrfToken, onSessionExpired }: AdminPageProp
       <section className="admin-section" aria-labelledby="invite-title">
         <div className="admin-section-heading">
           <div><p className="eyebrow">SUMAR AL HOGAR</p><h2 id="invite-title">Invitar miembro</h2></div>
+          <span className="admin-capacity-count">{occupiedPlaces}/5 lugares</span>
         </div>
         <form className="admin-inline-form" onSubmit={submitInvitation}>
           <label className="visually-hidden" htmlFor="invite-email">Correo de la persona</label>
-          <input id="invite-email" type="email" autoComplete="email" required maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="persona@correo.com" />
-          <button className="primary-button" type="submit" disabled={busyAction === 'invitation'}>{busyAction === 'invitation' ? 'Enviando…' : 'Enviar invitación'}</button>
+          <input ref={inviteEmailRef} id="invite-email" type="email" autoComplete="email" required maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="persona@correo.com" disabled={!hasAvailablePlaces} />
+          <button className="primary-button" type="submit" disabled={busyAction === 'invitation' || !hasAvailablePlaces}>{busyAction === 'invitation' ? 'Enviando…' : 'Enviar invitación'}</button>
         </form>
+        {!hasAvailablePlaces && <p className="admin-hint">El hogar ya tiene 5 lugares ocupados entre miembros e invitaciones pendientes.</p>}
         {data.invitations.length > 0 && (
           <div className="admin-member-list pending-invitations">
             {data.invitations.map((invitation) => (

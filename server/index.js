@@ -642,9 +642,9 @@ app.post('/api/households', requireSession, requireCsrf, requireAuth, asyncRoute
     }
     for (const event of events) {
       await client.query(
-        `INSERT INTO home_events (id, household_id, title, description, start_date, end_date, expires_at, status, is_scheduled, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10 / 1000.0))`,
-        [event.id, householdId, event.title.trim(), event.description.trim().slice(0, 500), event.startDate, event.endDate, event.expiresAt, event.status, event.isScheduled, event.createdAt],
+        `INSERT INTO home_events (id, household_id, created_by_user_id, title, description, start_date, end_date, expires_at, status, is_scheduled, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11 / 1000.0))`,
+        [event.id, householdId, request.authSession.user_id, event.title.trim(), event.description.trim().slice(0, 500), event.startDate, event.endDate, event.expiresAt, event.status, event.isScheduled, event.createdAt],
       )
     }
     await client.query('COMMIT')
@@ -691,6 +691,32 @@ app.get('/api/household', requireSession, requireAuth, requireHousehold, require
   })
 }))
 
+app.get('/api/household/summary', requireSession, requireAuth, requireHousehold, asyncRoute(async (request, response) => {
+  const [members, pending] = await Promise.all([
+    pool.query(
+      `SELECT m.user_id AS id,
+              COALESCE(m.nickname, split_part(u.email, '@', 1)) AS "displayName",
+              m.role
+       FROM household_memberships m
+       JOIN users u ON u.id = m.user_id
+       WHERE m.household_id = $1
+       ORDER BY CASE WHEN m.role = 'admin' THEN 0 ELSE 1 END, m.joined_at`,
+      [request.membership.household_id],
+    ),
+    request.membership.role === 'admin'
+      ? pool.query(
+        `SELECT count(*)::integer AS count FROM household_invitations
+         WHERE household_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`,
+        [request.membership.household_id],
+      )
+      : Promise.resolve({ rows: [{ count: 0 }] }),
+  ])
+  response.json({
+    members: members.rows,
+    pendingInvitations: pending.rows[0].count,
+  })
+}))
+
 app.patch('/api/household', requireSession, requireCsrf, requireAuth, requireHousehold, requireAdmin, asyncRoute(async (request, response) => {
   const name = typeof request.body?.name === 'string' ? request.body.name.trim() : ''
   if (name.length < 1 || name.length > 80) return sendError(response, 400, 'El nombre debe tener entre 1 y 80 caracteres.')
@@ -706,11 +732,33 @@ app.post('/api/household/invitations', requireSession, requireCsrf, requireAuth,
 
   const token = newToken()
   const invitationId = randomUUID()
-  await pool.query(
-    `INSERT INTO household_invitations (id, household_id, email, token_hash, expires_at)
-     VALUES ($1, $2, $3, $4, now() + interval '7 days')`,
-    [invitationId, request.membership.household_id, email, hash(token)],
-  )
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [request.membership.household_id])
+    const capacity = await client.query(
+      `SELECT
+         (SELECT count(*) FROM household_memberships WHERE household_id = $1) +
+         (SELECT count(*) FROM household_invitations
+          WHERE household_id = $1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()) AS occupied`,
+      [request.membership.household_id],
+    )
+    if (Number(capacity.rows[0].occupied) >= 5) {
+      await client.query('ROLLBACK')
+      return sendError(response, 409, 'El hogar ya tiene 5 lugares ocupados entre miembros e invitaciones pendientes.')
+    }
+    await client.query(
+      `INSERT INTO household_invitations (id, household_id, email, token_hash, expires_at)
+       VALUES ($1, $2, $3, $4, now() + interval '7 days')`,
+      [invitationId, request.membership.household_id, email, hash(token)],
+    )
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
   try {
     await sendEmail({
       to: email,
@@ -742,6 +790,15 @@ app.post('/api/invitations/accept', requireSession, requireCsrf, asyncRoute(asyn
     if (!invitation) {
       await client.query('ROLLBACK')
       return sendError(response, 400, 'La invitación no es válida o venció.')
+    }
+    await client.query('SELECT id FROM households WHERE id = $1 FOR UPDATE', [invitation.household_id])
+    const membershipCount = await client.query(
+      'SELECT count(*)::integer AS count FROM household_memberships WHERE household_id = $1',
+      [invitation.household_id],
+    )
+    if (membershipCount.rows[0].count >= 5) {
+      await client.query('ROLLBACK')
+      return sendError(response, 409, 'El hogar ya alcanzó el máximo de 5 personas.')
     }
     const existing = await client.query(
       'SELECT id FROM users WHERE lower(email) = $1 FOR UPDATE',
@@ -839,7 +896,27 @@ app.get('/api/data', requireSession, requireAuth, requireHousehold, asyncRoute(a
   const [items, assignments, events] = await Promise.all([
     pool.query('SELECT id, product, brand, price, priority, completed, extract(epoch from created_at) * 1000 AS "createdAt" FROM shopping_items WHERE household_id = $1 ORDER BY created_at DESC', [householdId]),
     pool.query('SELECT item_id AS "itemId", scheduled_date::text AS date, expires_at::text AS "expiresAt" FROM calendar_assignments WHERE household_id = $1', [householdId]),
-    pool.query('SELECT id, title, description, start_date::text AS "startDate", end_date::text AS "endDate", expires_at::text AS "expiresAt", status, is_scheduled AS "isScheduled", extract(epoch from created_at) * 1000 AS "createdAt" FROM home_events WHERE household_id = $1 ORDER BY created_at DESC', [householdId]),
+    pool.query(
+      `WITH household_members AS (
+         SELECT user_id,
+                row_number() OVER (
+                  ORDER BY CASE WHEN role = 'admin' THEN 0 ELSE 1 END, joined_at
+                )::integer AS member_number
+         FROM household_memberships
+         WHERE household_id = $1
+       )
+       SELECT e.id, e.title, e.description,
+              e.start_date::text AS "startDate", e.end_date::text AS "endDate",
+              e.expires_at::text AS "expiresAt", e.status,
+              e.is_scheduled AS "isScheduled",
+              COALESCE(m.member_number, 1)::integer AS "creatorMemberNumber",
+              extract(epoch from e.created_at) * 1000 AS "createdAt"
+       FROM home_events e
+       LEFT JOIN household_members m ON m.user_id = e.created_by_user_id
+       WHERE e.household_id = $1
+       ORDER BY e.created_at DESC`,
+      [householdId],
+    ),
   ])
   response.json({ items: items.rows.map((item) => ({ ...item, price: Number(item.price), createdAt: Number(item.createdAt) })), assignments: assignments.rows, events: events.rows.map((event) => ({ ...event, createdAt: Number(event.createdAt) })) })
 }))
@@ -906,10 +983,10 @@ app.post('/api/events', requireSession, requireCsrf, requireAuth, requireHouseho
   if (!validateEvent(request.body)) return sendError(response, 400, 'Revisá el título, estado y fechas del evento.')
   const { title, description, startDate, endDate, expiresAt, status, isScheduled } = request.body
   const result = await pool.query(
-    `INSERT INTO home_events (id, household_id, title, description, start_date, end_date, expires_at, status, is_scheduled)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO home_events (id, household_id, created_by_user_id, title, description, start_date, end_date, expires_at, status, is_scheduled)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id, title, description, start_date::text AS "startDate", end_date::text AS "endDate", expires_at::text AS "expiresAt", status, is_scheduled AS "isScheduled", extract(epoch from created_at) * 1000 AS "createdAt"`,
-    [randomUUID(), request.membership.household_id, title.trim(), description.trim().slice(0, 500), startDate, endDate, expiresAt, status, isScheduled],
+    [randomUUID(), request.membership.household_id, request.authSession.user_id, title.trim(), description.trim().slice(0, 500), startDate, endDate, expiresAt, status, isScheduled],
   )
   response.status(201).json({ event: { ...result.rows[0], createdAt: Number(result.rows[0].createdAt) } })
 }))
@@ -956,8 +1033,8 @@ app.use((error, _request, response, _next) => {
   })
 })
 
-const port = Number(process.env.API_PORT ?? 3001)
-const server = app.listen(port, '127.0.0.1', () => {
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 3001)
+const server = app.listen(port, '0.0.0.0', () => {
   console.info(`API de AtHouse lista en http://127.0.0.1:${port}`)
 })
 

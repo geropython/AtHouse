@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS calendar_assignments (
 CREATE TABLE IF NOT EXISTS home_events (
   id uuid PRIMARY KEY,
   household_id uuid NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+  created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
   title text NOT NULL CHECK (length(trim(title)) BETWEEN 1 AND 100),
   description text NOT NULL DEFAULT '',
   start_date date NOT NULL,
@@ -135,6 +136,9 @@ CREATE TABLE IF NOT EXISTS home_events (
   CHECK (end_date >= start_date),
   CHECK (expires_at >= end_date)
 );
+
+ALTER TABLE home_events
+  ADD COLUMN IF NOT EXISTS created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS home_events_by_household
   ON home_events (household_id, start_date);

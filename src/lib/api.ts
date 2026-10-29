@@ -68,3 +68,12 @@ export interface HouseholdResponse {
   }>
   emailOtpEnabled: boolean
 }
+
+export interface HouseholdSummary {
+  members: Array<{
+    id: string
+    displayName: string
+    role: 'admin' | 'member'
+  }>
+  pendingInvitations: number
+}

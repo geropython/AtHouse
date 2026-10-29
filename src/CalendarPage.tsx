@@ -3,6 +3,7 @@ import {
   eventCoversDate,
   formatDate,
   getActiveCalendarEvents,
+  getEventOwnerClass,
   getCalendarWeeks,
   isExpired,
   toDateKey,
@@ -148,9 +149,10 @@ export default function CalendarPage({
                   const isWeekend = weekday === 0 || weekday === 6
                   const hasCompletedEvent = dateEvents.some((event) => event.status === 'completed')
                   const hasExpiredEvent = dateEvents.some((event) => isExpired(event.expiresAt, today))
+                  const calendarColorClass = dateEvents.length ? getEventOwnerClass(dateEvents[0].creatorMemberNumber) : ''
                   return (
                     <button
-                      className={`calendar-day${isCurrentMonth ? '' : ' is-outside'}${isWeekend ? ' is-weekend' : ''}${isSelected ? ' is-selected' : ''}${date === today ? ' is-today' : ''}${dateEvents.length ? ' has-event' : ''}${hasCompletedEvent ? ' has-completed-event' : ''}${hasExpiredEvent ? ' has-expired-event' : ''}`}
+                      className={`calendar-day${isCurrentMonth ? '' : ' is-outside'}${isWeekend ? ' is-weekend' : ''}${isSelected ? ' is-selected' : ''}${date === today ? ' is-today' : ''}${dateEvents.length ? ` has-event ${calendarColorClass}` : ''}${hasCompletedEvent ? ' has-completed-event' : ''}${hasExpiredEvent ? ' has-expired-event' : ''}`}
                       key={date}
                       type="button"
                       onClick={() => selectDate(date)}
@@ -163,7 +165,9 @@ export default function CalendarPage({
                       )}
                       {startingEvents.length > 0 && (
                         <span className="calendar-day-events">
-                          {startingEvents.map((event) => <span key={event.id}>{event.title}</span>)}
+                          {startingEvents.map((event) => (
+                            <span className={getEventOwnerClass(event.creatorMemberNumber)} key={event.id}>{event.title}</span>
+                          ))}
                         </span>
                       )}
                     </button>
@@ -233,7 +237,7 @@ export default function CalendarPage({
           const expired = isExpired(event.expiresAt, today)
           return (
             <div className={`calendar-entry${expired ? ' is-expired' : ''}`} key={event.id}>
-              <span className={`calendar-entry-mark event-mark${event.status === 'completed' ? ' is-completed' : ''}`} />
+              <span className={`calendar-entry-mark event-mark ${getEventOwnerClass(event.creatorMemberNumber)}${event.status === 'completed' ? ' is-completed' : ''}`} />
               <div className="calendar-entry-copy">
                 <strong>{event.title}</strong>
                 <span>

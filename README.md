@@ -5,9 +5,9 @@ Aplicación para organizar compras, eventos y tareas del hogar.
 ## Funcionalidades
 
 - **Compras:** lista de pendientes y completadas, con precio en pesos y conversión a dólares blue.
-- **Calendario:** navegación mensual, selección directa de mes y año, asignación de compras y programación de eventos.
+- **Calendario:** navegación mensual, selección directa de mes y año, asignación de compras y programación de eventos. Los eventos se identifican con un color por integrante: administrador verde, y miembros violeta, azul, rojo y amarillo según su orden de ingreso.
 - **Eventos:** creación y edición de eventos con rangos de fechas, vencimientos y estados.
-- **Cuentas y hogares:** registro con contraseña; el enlace de verificación también inicia la sesión automáticamente. Incluye recuperación de contraseña, invitaciones, acceso por nickname para miembros y administración del hogar.
+- **Cuentas y hogares:** registro con contraseña; el enlace de verificación también inicia la sesión automáticamente. Incluye recuperación de contraseña, invitaciones, acceso por nickname para miembros y administración del hogar. Cada hogar admite un administrador y hasta cuatro miembros; las invitaciones pendientes reservan lugar.
 - **Persistencia:** compras, asignaciones, eventos, cuentas y hogares se guardan en PostgreSQL.
 
 Las tareas y los eventos vencidos se conservan; el calendario permite mostrarlos con la opción de incluir vencidos.
@@ -65,6 +65,8 @@ npm run build
 
 ## Despliegue
 
-El despliegue necesita servir el frontend y la API bajo el mismo origen HTTPS, y configurar un proxy inverso para `/api` hacia el proceso Node.js. Configurá `APP_ORIGIN`, `DATABASE_URL`, `SESSION_SECRET` (al menos 32 caracteres aleatorios) y SMTP mediante variables de entorno del servidor; no publiques `.env`. La API escucha en `127.0.0.1` por diseño y debe quedar detrás del proxy.
+El frontend puede desplegarse en Netlify y la API Express en un servicio Node.js como Render. La API debe conectarse a una base PostgreSQL accesible desde internet; la base local de desarrollo no está disponible para el servicio desplegado. Configurá en el servicio de la API las variables `NODE_ENV=production`, `APP_ORIGIN` (URL exacta del sitio publicado en Netlify), `DATABASE_URL`, `SESSION_SECRET` (al menos 32 caracteres aleatorios) y las variables SMTP. No publiques `.env` ni subas secretos al repositorio.
+
+Configurá Netlify para redirigir/proxificar `/api/*` hacia la URL pública de la API, conservando el prefijo `/api`. El cliente usa rutas relativas `/api`; el proxy permite que frontend y API compartan el origen para las cookies de sesión. El servidor escucha en el puerto asignado por la plataforma mediante `PORT`.
 
 La autenticación adicional disponible es por código de correo. Passkeys/WebAuthn y la selección de varios hogares por una misma cuenta aún no están implementados.

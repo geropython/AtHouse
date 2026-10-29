@@ -4,7 +4,7 @@ import AuthPage from './AuthPage'
 import CalendarPage from './CalendarPage'
 import EventsPage from './EventsPage'
 import HouseholdSetupPage from './HouseholdSetupPage'
-import { apiRequest, type AuthUser, type SessionResponse } from './lib/api'
+import { apiRequest, type AuthUser, type HouseholdSummary, type SessionResponse } from './lib/api'
 import type { CalendarAssignment, HomeEvent, Priority, ShoppingItem, ShoppingItemInput } from './types'
 
 type Page = 'shopping' | 'calendar' | 'events' | 'admin' | 'sethouse'
@@ -103,6 +103,7 @@ function App() {
   const [items, setItems] = useState<ShoppingItem[]>([])
   const [assignments, setAssignments] = useState<CalendarAssignment[]>([])
   const [events, setEvents] = useState<HomeEvent[]>([])
+  const [householdSummary, setHouseholdSummary] = useState<HouseholdSummary | null>(null)
   const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [csrfToken, setCsrfToken] = useState('')
   const [isAuthLoading, setIsAuthLoading] = useState(true)
@@ -114,6 +115,7 @@ function App() {
     return params.has('verify') || params.has('reset') || params.has('invitation')
   })
   const [activePage, setActivePage] = useState<Page>('shopping')
+  const [focusHouseholdInvitation, setFocusHouseholdInvitation] = useState(false)
   const [editingItem, setEditingItem] = useState<ShoppingItem | null>(null)
   const [eventToEdit, setEventToEdit] = useState<HomeEvent | null>(null)
   const [isFormOpen, setIsFormOpen] = useState(false)
@@ -164,6 +166,7 @@ function App() {
       setItems([])
       setAssignments([])
       setEvents([])
+      setHouseholdSummary(null)
       setIsDataLoading(false)
       return
     }
@@ -188,6 +191,39 @@ function App() {
         if (active) setIsDataLoading(false)
       })
     return () => { active = false }
+  }, [authUser?.household?.id, authUser?.id, handleSessionExpired])
+
+  const refreshHouseholdSummary = useCallback(async () => {
+    try {
+      const summary = await apiRequest<HouseholdSummary>('/household/summary')
+      setHouseholdSummary(summary)
+    } catch (error) {
+      console.error('No se pudo actualizar la lista de miembros del hogar.', error)
+      setDataError(error instanceof Error ? error.message : 'No se pudo actualizar la lista de miembros.')
+      if (isUnauthorized(error)) handleSessionExpired()
+    }
+  }, [handleSessionExpired])
+
+  useEffect(() => {
+    if (!authUser?.household) return
+    let active = true
+    const loadSummary = () => {
+      apiRequest<HouseholdSummary>('/household/summary')
+        .then((summary) => {
+          if (active) setHouseholdSummary(summary)
+        })
+        .catch((error: unknown) => {
+          if (!active) return
+          console.error('No se pudo actualizar la lista de miembros del hogar.', error)
+          if (isUnauthorized(error)) handleSessionExpired()
+        })
+    }
+    loadSummary()
+    const interval = window.setInterval(loadSummary, 30_000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
   }, [authUser?.household?.id, authUser?.id, handleSessionExpired])
 
   async function refreshHouseholdData() {
@@ -441,6 +477,35 @@ function App() {
 
         <div className="topbar-account">
           <div className="topbar-note"><span className="status-dot" /> {authUser.household.name}</div>
+          {householdSummary && (
+            <div className="household-presence" role="list" aria-label={`${householdSummary.members.length} miembros actuales en el hogar`}>
+              {householdSummary.members.map((member) => (
+                <span
+                  className={`household-avatar${member.role === 'admin' ? ' is-admin' : ''}`}
+                  key={member.id}
+                  title={`${member.displayName}${member.role === 'admin' ? ' · Administrador' : ''}`}
+                  aria-label={`${member.displayName}${member.role === 'admin' ? ', administrador' : ''}`}
+                  role="listitem"
+                >
+                  <span>{member.displayName.slice(0, 1).toUpperCase()}</span>
+                </span>
+              ))}
+              {authUser.role === 'admin' && householdSummary.members.length + householdSummary.pendingInvitations < 5 && (
+                <button
+                  className="household-avatar household-add-member"
+                  type="button"
+                  aria-label="Invitar a un miembro"
+                  title="Invitar a un miembro"
+                  onClick={() => {
+                    setFocusHouseholdInvitation(true)
+                    setActivePage('admin')
+                  }}
+                >
+                  <span aria-hidden="true">+</span>
+                </button>
+              )}
+            </div>
+          )}
           <button className="sign-out-button" type="button" onClick={() => void signOut()}>Cerrar sesión</button>
         </div>
       </header>
@@ -553,7 +618,13 @@ function App() {
           onGoHome={() => setActivePage('shopping')}
         />
       ) : activePage === 'admin' && authUser.role === 'admin' ? (
-        <AdminPage csrfToken={csrfToken} onSessionExpired={handleSessionExpired} />
+        <AdminPage
+          csrfToken={csrfToken}
+          focusInvitation={focusHouseholdInvitation}
+          onInvitationFocused={() => setFocusHouseholdInvitation(false)}
+          onHouseholdSummaryChanged={() => void refreshHouseholdSummary()}
+          onSessionExpired={handleSessionExpired}
+        />
       ) : (
         <section className="placeholder-page">
           <div className="placeholder-icon"><Icon name={activePage === 'admin' ? 'house' : 'sparkles'} size={25} /></div>
